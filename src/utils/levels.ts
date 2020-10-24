@@ -1,4 +1,4 @@
-export const gameConfig = {
+export const levels = {
   FRENCH: {
     min: 104,
     max: 153,
@@ -12,4 +12,4 @@ export const gameConfig = {
     max: 361,
   },
 };
-export default gameConfig;
+export default levels;

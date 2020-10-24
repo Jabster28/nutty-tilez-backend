@@ -1,100 +1,84 @@
+/* eslint-disable no-process-exit */
 /* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable no-console */
 import * as io from 'socket.io-client';
 import getJWT from './utils/jwt';
 import colors from './utils/colors';
 import levels from './utils/levels';
-type Language = 'GERMAN' | 'FRENCH' | 'SPANISH';
 
-/**
- * Class that holds all of the information for the Nutty Tilez session.
- */
-class NuttyTilez {
-  /**
-   * JWT Token from Nutty Tilez
-   */
-  jwt: string;
-  /**
-   * Level number to complete
-   */
+const getJWTProxy = (email?: string, password?: string, jwt?: string) => {
+  if (jwt) return Promise.resolve(jwt);
+  return getJWT(email || '', password || '');
+};
+
+interface NuttyTilezGameProps {
+  email?: string;
+  password?: string;
+  jwt?: string;
+  delay?: number;
+  demonDante?: boolean;
+  timeout?: number;
+  language: 'GERMAN' | 'SPANISH' | 'FRENCH';
   level: number;
-  /**
-   * Language to choose
-   */
-  language: Language;
-  /**
-   * Whether to fight Demon Dante or not
-   */
-  dante: boolean;
-  /**
-   * Socket that connects to Nutty Tilez' servers
-   */
-  socket: SocketIOClient.Socket;
-  /**
-   * List of objects w/ all words that the level will give you
-   */
-  levelWords: any[];
-  /**
-   * List of question IDs
-   */
-  questionIds: number[];
-  /**
-   * Lobby timeout for initial connection
-   */
-  timeout: number;
-  /**
-   * Delay after question is answered
-   */
-  delay: number;
-  /**
-   * Whether the game has been completed or not
-   */
-  completedGame: boolean;
-  /**
-   * Whether the program is currently in a lobby
-   */
-  joinedLobby: boolean;
-  /**
-   * List of lobby players w/ UUIDs
-   */
-  lobbyPlayers: any[];
-  /**
-   * Internal ID for Nutty Tilez Level
-   */
-  gameId: number;
+}
 
-  constructor(
-    auth: {
-      jwt?: string;
-      email?: string;
-      password?: string;
-    },
-    level: number,
-    language: Language,
-    dante?: boolean,
-    timeout?: number,
-    delay?: number
-  ) {
-    this.language = language;
-    this.dante = dante || false;
+type levelWordType = {
+  name: string;
+  description: string;
+  translation: string;
+  id: number;
+};
+
+export class NuttyTilezGame {
+  public answerDelay: number;
+  public demonDante: boolean;
+  public lobbyTimeout: number;
+  public language: 'GERMAN' | 'SPANISH' | 'FRENCH';
+  public level: number;
+  public gameId: number;
+  public levelWords: levelWordType[];
+  public questionIds: number[];
+  public lobbyPlayers: object[];
+  public completedGame: boolean;
+  public joinedLobby: boolean;
+  public socket: SocketIOClient.Socket;
+  public jwt: string;
+
+  constructor({
+    email,
+    password,
+    jwt,
+    delay,
+    demonDante,
+    timeout,
+    language,
+    level,
+  }: NuttyTilezGameProps) {
+    this.answerDelay = delay || 2;
+    this.demonDante = demonDante || false;
+    this.lobbyTimeout = (timeout || 30) * 1000;
     this.jwt = '';
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    this.language = language.toUpperCase();
+    this.level = level;
+    this.gameId = levels[this.language].min + Number(level) - 1;
+    console.log(levels);
+    console.log(language);
     this.levelWords = [];
     this.questionIds = [];
     this.lobbyPlayers = [];
     this.completedGame = false;
-    this.timeout = timeout || 30000;
-    this.delay = delay || 20;
     this.joinedLobby = false;
-    this.level = level;
-    this.gameId =
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      levels[this.language.toUpperCase()].min + Number(this.level) - 1;
 
     this.socket = io('wss://nutty.thisislanguage.com/nutty-tilez', {
-      timeout: 50000,
+      timeout: 2000,
       transports: ['websocket', 'polling'],
     });
+
+    console.log(`${colors.fgBlue}Connecting...${colors.reset}`);
+    this.socket.on('connect', () => this.onConnect());
+    // @ts-ignore
     this.socket.on('authenticated', () => this.onAuthenticated());
     // @ts-ignore
     this.socket.on('level:words', w => this.onLevelWords(w));
@@ -103,175 +87,147 @@ class NuttyTilez {
     // @ts-ignore
     this.socket.on('game:start', () => this.onGameStart());
     // @ts-ignore
-    // this.socket.on('players:online', () => this.onpla());
     // @ts-ignore
     this.socket.on('player:status', (w, e) => this.onPlayerStatus(w, e));
     // @ts-ignore
     this.socket.on('game:over', w => this.onGameOver(w));
     // @ts-ignore
-    this.socket.on('game:countdown', w => this.onGameCountDown(w));
+    this.socket.on('game:countdown', w => this.onGameCountdown(w));
     // @ts-ignore
     this.socket.on('lobby:joined', w => this.onLobbyJoined(w));
     // @ts-ignore
     this.socket.on('lobby:players', w => this.onLobbyPlayers(w));
     // @ts-ignore
 
-    console.log(`${colors.fgBlue}Connecting...${colors.reset}`);
-
-    if (auth.jwt) {
-      this.jwt = auth.jwt;
-      this.onConnect();
-    } else {
-      if (!auth.email || !auth.password) {
-        throw new Error('No email and/or password');
-      }
-
-      getJWT(auth.email, auth.password).then(jwt => {
-        this.jwt = jwt;
-        this.onConnect();
-      });
-    }
+    getJWTProxy(email, password, jwt).then(jwt => {
+      this.jwt = jwt;
+    });
   }
 
-  /**
-   * Handler that is triggered on initial socket connection
-   */
   onConnect() {
     console.log(`${colors.fgGreen}Connected${colors.reset}`);
-
     this.socket.emit('authenticate', {
       token: this.jwt,
     });
   }
 
-  /**
-   * Handler that is triggered after onConnect
-   */
   onAuthenticated() {
     console.log(`${colors.fgGreen}Authenticated${colors.reset}`);
     setTimeout(() => {
-      this.socket.emit('level:words', this.level);
-      this.socket.emit('level:play', this.gameId, this.dante);
+      this.socket.emit('level:words', this.gameId);
+      this.socket.emit('level:play', this.gameId, this.demonDante);
 
       setTimeout(() => {
         if (!this.joinedLobby) {
-          throw Error(
+          console.log(
             `${colors.bright + colors.fgRed}Lobby connection timed out${
               colors.reset
             }`
           );
+          this.completedGame = true;
         }
-      }, this.timeout);
+      }, this.lobbyTimeout);
     }, 100);
   }
 
-  /**
-   * Handler that is triggered when the words are sent from the server
-   * @param words Words as a list as objects
-   */
-  onLevelWords(words: any[]) {
-    console.log(words);
+  onLevelWords(x: levelWordType[]) {
     console.log(`${colors.fgGreen}Received words${colors.reset}`);
-    this.levelWords = words;
+    this.levelWords = x;
   }
 
-  /**
-   * Handler for room joining, generates list of questions needed
-   * @param questionIds List of all question IDs, as numbers
-   */
-  onRoomJoined(questionIds: number[]) {
+  onRoomJoined(x: number[]) {
+    this.joinedLobby = true;
+
     console.log(`${colors.fgGreen}Joined room${colors.reset}`);
-    const questionsNeeded = 60000 / this.delay;
-    for (let i = 0; i < Math.ceil(questionsNeeded / questionIds.length); i++) {
-      questionIds = questionIds.concat(questionIds);
+    const questionsNeeded = 60000 / this.answerDelay;
+    for (let i = 0; i < Math.ceil(questionsNeeded / x.length); i++) {
+      this.questionIds = this.questionIds.concat(x);
     }
-    this.questionIds = questionIds;
   }
 
-  /**
-   * Handler that is triggered when a player object updates in a lobby
-   * @param playerId Player ID
-   * @param status New player state
-   */
-  onPlayerStatus(playerId: any, status: any) {
-    console.log(playerId);
-    console.log(status);
-    if (status.isDead) {
+  onPlayerStatus(
+    x: number,
+    y: {
+      isDead: boolean;
+    }
+  ) {
+    // @ts-ignore
+    const player = this.lobbyPlayers.find(z => z.playerId === x);
+    if (player && y.isDead) {
       console.log(
-        `${colors.fgRed}Player Died, Score: ${status.score}${colors.reset}`
+        // @ts-ignore
+        `${colors.fgRed}Player Died: ${player.firstName || ''} ${
+          // @ts-ignore
+          player.lastName || ''
+          // @ts-ignore
+        }, Score: ${y.score}${colors.reset}`
       );
     }
   }
 
-  /**
-   * Handler that triggers when a game starts, creates an interval that answers questions indefinitely
-   */
   onGameStart() {
     console.log(`${colors.fgGreen}Game Start${colors.reset}`);
+
+    console.log(this.gameId);
 
     for (let i = 0; i < this.questionIds.length; i++) {
       setTimeout(() => {
         if (!this.completedGame) {
           this.socket.emit('translation:correct', this.questionIds[i]);
-          console.log(this.levelWords);
-          const word = this.levelWords.find(y => y.id === this.questionIds[i]);
+          const word: levelWordType = this.levelWords.find(
+            y => y.id === this.questionIds[i]
+          ) || {
+            name: '',
+            description: '',
+            translation: '',
+            id: 0,
+          };
           console.log(
             `${colors.fgGreen}Question Answered: ${word.name || ''}${
               word.description ? ` (${word.description})` : ''
             } - ${word.translation || ''}${colors.reset}`
           );
         }
-      }, i * this.delay);
+      }, i * this.answerDelay);
     }
   }
 
-  /**
-   * Handler that triggers once the game ends
-   * @param status Status sent from Nutty Tilez, holding game data
-   */
-  onGameOver(status: {type: string}) {
-    if (status.type === 'Win') {
+  onGameOver(x: any) {
+    if (x.type === 'Win') {
       console.log(`${colors.fgGreen + colors.bright}Win!${colors.reset}`);
-    } else if (status.type === 'Timeout') {
-      console.log((colors.fgRed = `${colors.bright}Timeout!${colors.reset}`));
-    } else if (status.type === 'Dead') {
-      console.log((colors.fgRed = `${colors.bright}Dead!${colors.reset}`));
+      process.exit(0);
+    } else if (x.type === 'Timeout') {
+      console.log(`${colors.fgRed + colors.bright}Timeout!${colors.reset}`);
+      process.exit(0);
+    } else if (x.type === 'Dead') {
+      console.log(`${colors.fgRed + colors.bright}Dead!${colors.reset}`);
+      process.exit(0);
     }
-
     this.completedGame = true;
   }
 
-  /**
-   * Handler for rendering countdown text
-   * @param x String sent from Nutty Tilez
-   */
-  onGameCountDown(x: string) {
-    console.log(`${colors.fgBlue}Game Countdown: ${x}${colors.reset}`);
-  }
-
-  /**
-   * Handler that is triggered when a player enters the lobby
-   * @param player Player object that joined
-   */
-  onLobbyJoined(player: any) {
+  onGameCountdown(x: string) {
     console.log(
-      `${colors.fgBlue}Player Joined: ${player.firstName} ${player.lastName} (${player.playerId})${colors.reset}`
+      `${colors.fgBlue}Game Countdown: ${x.toString()}`,
+      colors.reset
     );
-    this.lobbyPlayers.push(player);
   }
 
-  /**
-   * Handler that triggers when you initially join a lobby
-   * @param players List of players in lobby as of when you join
-   */
-  onLobbyPlayers(players: any[]) {
-    players.forEach(player => {
+  onLobbyJoined(x: any) {
+    console.log(
+      `${colors.fgBlue}Player Joined: ${x.firstName} ${x.lastName} (${x.playerId})${colors.reset}`
+    );
+    this.lobbyPlayers.push(x);
+  }
+
+  onLobbyPlayers(x: any[]) {
+    x.forEach(y => {
       console.log(
-        `${colors.fgBlue}Player Joined: ${player.firstName} ${player.lastName} (${player.playerId})${colors.reset}`
+        `${colors.fgBlue}Player Joined: ${y.firstName} ${y.lastName} (${y.playerId})${colors.reset}`
       );
-      this.lobbyPlayers.push(player);
+      this.lobbyPlayers.push(y);
     });
   }
 }
 
-export default NuttyTilez;
+export default NuttyTilezGame;

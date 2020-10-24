@@ -1,5 +1,5 @@
 import {option} from 'yargs';
-import NuttyTilez from './index';
+import {NuttyTilezGame} from './index';
 
 const args = option('email', {
   alias: 'e',
@@ -43,14 +43,18 @@ const args = option('email', {
     desc: 'Level number',
     type: 'number',
   }).argv;
-
-const nut = new NuttyTilez(
-  {
-    jwt: args.jwt,
-    password: args.password,
-    email: args.email,
-  },
-  1,
-  'SPANISH',
-  false
-);
+if (!args.level) throw new Error('teeheehee');
+if (
+  args.language !== 'GERMAN' &&
+  args.language !== 'FRENCH' &&
+  args.language !== 'SPANISH'
+)
+  throw new Error('teeheehee');
+new NuttyTilezGame({
+  jwt: args.jwt,
+  password: args.password,
+  email: args.email,
+  level: args.level,
+  language: args.language,
+  demonDante: args.dante,
+});
